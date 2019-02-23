@@ -4,8 +4,11 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/alecthomas/kingpin"
+	kitlog "github.com/go-kit/kit/log"
 	workloadsv1alpha1 "github.com/gocardless/theatre/pkg/apis/workloads/v1alpha1"
 	"github.com/gocardless/theatre/pkg/client/clientset/versioned"
+	theatre "github.com/gocardless/theatre/pkg/client/clientset/versioned"
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -13,7 +16,65 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
+
+var (
+	CLI = kingpin.New("consoles", "Manages theatre consoles")
+
+	create         = CLI.Command("create", "Creates a new console given a template")
+	createSelector = create.Flag("selector", "Selector that matches console template").Required().String()
+	createTimeout  = create.Flag("timeout", "Timeout for the new console").Duration()
+	createReason   = create.Flag("reason", "Reason for creating console").String()
+	createCommand  = create.Arg("command", "Command to run in console").Strings()
+
+	list   = CLI.Command("list", "Lists cluster consoles")
+	attach = CLI.Command("attach", "Attaches to existing console")
+)
+
+func CLIRun(ctx context.Context, logger kitlog.Logger, config *rest.Config, args []string) error {
+	client, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return err
+	}
+
+	theatreClient, err := theatre.NewForConfig(config)
+	if err != nil {
+		return err
+	}
+
+	runner := New(client, theatreClient)
+
+	switch kingpin.MustParse(CLI.Parse(args)) {
+	case create.FullCommand():
+		tpl, err := runner.FindTemplateBySelector(metav1.NamespaceAll, *createSelector)
+		if err != nil {
+			return err
+		}
+
+		opt := Options{Cmd: *createCommand, Timeout: int(createTimeout.Seconds()), Reason: *createReason}
+		csl, err := runner.Create(tpl.Namespace, *tpl, opt)
+		if err != nil {
+			return nil
+		}
+
+		csl, err = runner.WaitUntilReady(ctx, *csl)
+		if err != nil {
+			return nil
+		}
+
+		pod, err := runner.GetAttachablePod(csl)
+		if err != nil {
+			return nil
+		}
+
+		logger.Log("pod", pod.Name, "msg", "console pod created")
+	case list.FullComment():
+
+	}
+
+	return nil
+}
 
 // Runner is responsible for managing the lifecycle of a console
 type Runner struct {
@@ -38,9 +99,9 @@ type Options struct {
 }
 
 // New builds a runner
-func New(coreClient kubernetes.Interface, theatreClient versioned.Interface) *Runner {
+func New(client kubernetes.Interface, theatreClient versioned.Interface) *Runner {
 	return &Runner{
-		kubeClient:    coreClient,
+		kubeClient:    client,
 		theatreClient: theatreClient,
 	}
 }
