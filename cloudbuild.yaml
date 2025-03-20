@@ -1,0 +1,17 @@
+---
+steps:
+- name: 'gcr.io/cloud-builders/docker'
+  args: [
+    'build',
+    '--tag', 'europe-west1-docker.pkg.dev/$PROJECT_ID/docker/theatre:$COMMIT_SHA',
+    '--file', 'Dockerfile',
+    '.'
+  ]
+
+images: [
+  'europe-west1-docker.pkg.dev/$PROJECT_ID/docker/theatre:$COMMIT_SHA'
+]
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: 'E2_MEDIUM'
